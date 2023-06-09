@@ -1,20 +1,22 @@
 import subprocess
 import tkinter as tk
 from PIL import Image, ImageTk
+import speech_recognition as sr
 import cv2
 import util
 import os
 import datetime
 import dlib
 import re
+import smtplib
 from scipy.spatial import distance as dist
 from imutils import face_utils
-
 
 class App:
 
     def __init__(self):
         # reqd for blink detection
+        self.recognized_name = ""  # Add this line to initialize the attribute
         self.detector = dlib.get_frontal_face_detector()
         self.predictor = dlib.shape_predictor('shape_predictor_68_face_landmarks.dat')
 
@@ -92,6 +94,7 @@ class App:
 
         return ear
 
+
     def detect_blink(self):
         blink_detected = False
         blinked_time = 0
@@ -137,9 +140,48 @@ class App:
 
         return blink_detected, blinked_frame
 
+    def recognize_speech(self):
+        # Initialize the recognizer
+        recognizer = sr.Recognizer()
+
+        # Use the default microphone as the audio source
+        with sr.Microphone() as source:
+            print("Say your name please")
+
+            # Adjust for ambient noise levels
+            recognizer.adjust_for_ambient_noise(source)
+
+            # Capture the audio
+            audio = recognizer.listen(source)
+
+        try:
+            # Recognize speech using Google Speech Recognition
+            text = recognizer.recognize_google(audio)
+            self.process_speech(text)  # Call the method to process the recognized speech
+
+        except sr.UnknownValueError:
+            print("Speech recognition could not understand audio")
+
+        except sr.RequestError as e:
+            print("Could not request results from Google Speech Recognition service:", str(e))
+
+    def send_email(self, recipient, subject, message):
+        sender = 'kumpz111@gmail.com'  # Replace with your email address
+        password = 'wujxxkopqoeyupbr'  # Replace with your email password
+
+        # Compose the email
+        email_text = f"Subject: {subject}\n\n{message}"
+
+        # Send the email
+        with smtplib.SMTP('smtp.gmail.com', 587) as server:
+            server.starttls()
+            server.login(sender, password)
+            server.sendmail(sender, recipient, email_text)
+
     def login(self):
         # --------------------------------------blink check-------------------------------------------------
-
+        self.recognize_speech()
+        name = self.recognized_name
         # Display a message indicating the user needs to blink
         util.msg_box("Blink", "Please blink to initiate login.")
 
@@ -147,21 +189,26 @@ class App:
         blink_detected, blinked_frame = self.detect_blink()
 
         if blink_detected:
+            #speech recognition ------------------------------------
+
             util.msg_box("Success", "Blink detected,continuing to login.....")
             unknown_img_path = './.tmp.jpg'
             cv2.imwrite(unknown_img_path, blinked_frame)
             output = str(subprocess.check_output(['face_recognition', self.db_dir, unknown_img_path]))
+            self.recognize_speech()
             # now we have to parse the output to get the name
 
             name = output.split(',')[1][:-5]
             print(name)
+
             if name in ['unknown_person', 'no_persons_found']:
                 util.msg_box('Error', 'Unknown user, Please register or try again!')
+            elif name != self.recognized_name:  # Compare entered name and recognized name
+                util.msg_box('Error', 'Entered name and recognized name do not match!')
             else:
-                util.msg_box('Success', 'Check-In successfull!! {} Your entry time has been recorded.'.format(name))
-                with open(self.log_path, 'a') as f:
-                    f.write('{},{}\n'.format(name, datetime.datetime.now()))
-                    f.close()
+                util.msg_box('Success', 'Check-In successful!! {} Your entry time has been recorded.'.format(name))
+                self.send_email('kumpz111@gmail.com', 'Attendance Confirmation',
+                                f"Dear {name}, your attendance has been recorded.")
 
             os.remove(unknown_img_path)
 
@@ -170,6 +217,7 @@ class App:
             cv2.destroyAllWindows()
 
     def register(self):
+        self.recognized_name = ""
         self.register_window = tk.Toplevel(self.main_window)
         self.register_window.geometry('1200x520+200+100')
 
@@ -199,6 +247,15 @@ class App:
 
     def start(self):
         self.main_window.mainloop()
+
+    def process_speech(self, text):
+        if "register" in text:
+            self.register()
+        elif "logout" in text:
+            self.logout()
+        else:
+            print("message", text)
+            self.recognized_name = text
 
     def accept(self):
         name = self.enter_text_register.get(1.0, "end-1c")
